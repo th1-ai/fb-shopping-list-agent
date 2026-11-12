@@ -1,125 +1,124 @@
 ---
 name: fb-shopping-list
+description: Generate the hotel's F&B grocery shopping list from projected PMS guest-nights and the inventory sheet, dry run first and written to the sheet only after approval. Also logs "ran out" and "over-stocked" calibration events.
+when_to_use: Use when the operator says "shopping list", "grocery list", "what do we need to buy", "F&B list" or "stock check", asks about groceries on a shop day, or reports that an item ran out or was over-stocked.
 ---
 
 # Skill: F&B Shopping List
 
-Generate a grocery shopping list based on projected guest counts from the PMS and current stock levels from the F&B Inventory sheet.
+Generate a grocery shopping list from projected guest-nights (PMS) and current stock levels (F&B inventory sheet).
 
-## Trigger
-
-User says "shopping list", "grocery list", "what do we need to buy", "F&B list", "stock check", "generate shopping list", or it's a configured shop day and the operator asks about groceries.
-
-> **Template note:** Replace `{{HOTEL_NAME}}`, `{{PMS_*}}`, `{{INVENTORY_TOOL}}`, `{{SHEET_ID_INVENTORY}}` and `{{SHEET_ID_SHOPPING_LIST}}` with the wrappers your setup uses. See [README.md](../../../README.md#customising) for guidance.
+> **Template note:** Replace `{{INVENTORY_TOOL}}` and `{{PMS_LOOKUP_TOOL}}` with the scripts your setup uses. This repo does not ship them. See [README.md](../../../README.md#customising) for the placeholders and [the tool contract](../../../README.md#the-tool-you-supply).
 
 ## Config
 
-- **Inventory sheet:** ID in `.env` as `SHEET_ID_INVENTORY`
+- **Inventory sheet:** ID in `.env` as `SHEET_ID_INVENTORY` (tabs: `Inventory`, `Stock`, `Calibration`)
 - **Shopping-list sheet:** ID in `.env` as `SHEET_ID_SHOPPING_LIST` (often the same sheet, different tab)
-- **Tool:** `{{INVENTORY_TOOL}}`
-- **Setup tool:** a one-off script to create the inventory tabs if they don't exist (the reference setup uses `tools/fb_setup_sheet.py`)
+- **PMS property:** `PMS_PROPERTY_ID` in `.env`
+- **Shopping-list tool:** `{{INVENTORY_TOOL}}`
+- **PMS lookup tool:** `{{PMS_LOOKUP_TOOL}}` (used by the shopping-list tool; run it directly only to cross-check a guest count)
 
 ## Prerequisites
 
-- `SHEET_ID_INVENTORY` must be set in `.env`. If not, run the setup script first.
-- Staff should have entered current stock counts in the Stock tab before generating a list.
+- `SHEET_ID_INVENTORY` has a real value in `.env`.
+- The `Inventory` tab lists the items and their consumption model.
+- Staff entered current counts in the `Stock` tab. A list built on an old count is wrong in a way nobody sees until something runs out.
 
 ## Process
 
 ### 1. Check setup
 
-Verify `SHEET_ID_INVENTORY` is set:
-
 ```bash
-grep SHEET_ID_INVENTORY .env
+grep '^SHEET_ID_INVENTORY=' .env
 ```
 
-If empty or missing, tell the operator the sheet needs to be set up first and offer to run the setup script.
+If the value is empty, missing or still a `{{...}}` placeholder, stop. Tell the operator the sheet needs to be set up first (README, Quick start).
 
-### 2. Dry-run first
-
-Always start with a dry run to preview what the tool calculates:
+### 2. Dry run first
 
 ```bash
 {{INVENTORY_TOOL}} --dry-run
 ```
 
-This pulls:
-- Inventory items and consumption models from the Inventory tab
-- Latest stock levels from the Stock tab
+The tool reads:
+- Items and consumption models from the `Inventory` tab
+- Latest stock levels from the `Stock` tab
 - Guest counts from the PMS for the shopping window
 
-### 3. Present the list
+For a different coverage window, add `--days N`:
 
-Show the operator the shopping list grouped by category. Include:
-- Shopping window (dates covered)
-- Total guest-nights
-- Items to buy, grouped by category (DAIRY, PRODUCE, DRY GOODS, BEVERAGES, CLEANING, etc.)
-- On-hand quantities vs. to-buy quantities
+```bash
+{{INVENTORY_TOOL}} --dry-run --days 5
+```
 
-### 4. Confirm and write
+### 3. Check the result before you show it
 
-After approval, write to the sheet:
+- **Guest-nights = 0, or the PMS call failed:** treat it as an error, not as an empty hotel. Do not present a zero-guest list. Ask the operator whether the property is really empty. To cross-check, run `{{PMS_LOOKUP_TOOL}}` for the same dates.
+- **Stock is stale** (latest entries older than the last shop day): keep the list, put a warning at the top.
+- **An item has no stock count:** list it separately. Do not assume zero.
+
+### 4. Present the list
+
+Show the list grouped by category. Include:
+- Shopping window (dates covered) and total guest-nights
+- Date of the latest stock count
+- Items to buy by category (DAIRY, PRODUCE, DRY GOODS, BEVERAGES, CLEANING, and so on, as named in the sheet)
+- On-hand and to-buy quantities, with units
+
+Then ask for approval. The operator can ask for changes (another window, drop an item) and you run the dry run again.
+
+### 5. Write after approval
+
+Only after the operator approves the list you showed:
 
 ```bash
 {{INVENTORY_TOOL}}
 ```
 
-### 5. Override days (optional)
-
-If the operator wants a different coverage window:
-
-```bash
-{{INVENTORY_TOOL}} --days 5
-```
+Use the same `--days` value as the approved dry run, so the written list is the approved list.
 
 ### 6. Log calibration events
 
-If something ran out early or was overstocked:
+When the operator says something ran out early or was left over:
 
 ```bash
-{{INVENTORY_TOOL}} --log "<Item>" "ran-out" "Details about when it ran out"
-{{INVENTORY_TOOL}} --log "<Item>" "over-stocked" "Details about surplus"
+{{INVENTORY_TOOL}} --log "<Item>" "ran-out" "When it ran out, guest-nights in the window"
+{{INVENTORY_TOOL}} --log "<Item>" "over-stocked" "How much was left"
 ```
 
-These events are appended to a Calibration tab in the inventory sheet — over time, you (or the next maintainer of the tool) can adjust the consumption model to reflect actual usage.
+Events go to the `Calibration` tab. They are the evidence for tuning the consumption model later. Logging an event does not change any consumption value.
 
-## Shopping schedule (example — adapt to your supplier days)
+## Shopping schedule (example, adapt to your supplier days)
 
-| Shop day | Covers | Auto-detected |
-|----------|--------|---------------|
-| Day 1 | Day 2–Day 5 (4 days) | Yes |
-| Day 4 | Day 5–Day 1 (4 days) | Yes |
-| Day 5 | Day 6–Day 2 (4 days) | Yes |
-| Other | 4 days default | Yes |
+| Shop day | Covers |
+|----------|--------|
+| Day 1 | Day 2 to Day 5 (4 days) |
+| Day 4 | Day 5 to Day 1 (4 days) |
+| Day 5 | Day 6 to Day 2 (4 days) |
+| Any other day | 4 days from tomorrow |
 
-Configure your own shop days in the tool. The default "4 days of coverage per shop" is a sensible starting point — adjust per supplier delivery schedule.
+The shop days and the default window live in your tool. Four days of coverage per shop is a starting point; adjust it to your supplier delivery schedule.
 
 ## Consumption models
 
-- **Per-guest:** Scales with PMS guest count.
-  `to_buy = ceil(guest_days / guests_per_unit * 1.10) - on_hand`
-  The `1.10` is a safety buffer; tune up or down based on calibration events.
-- **Par-level:** Fixed minimum stock. If `on_hand < par_min`, buy up to `par_target`.
+- **Per-guest:** scales with the PMS guest count.
+  `to_buy = max(0, ceil(guest_nights / guests_per_unit * 1.10) - on_hand)`
+  `1.10` is a 10 % safety buffer. `guests_per_unit` is how many guest-nights one unit covers, so a lower value means buying more.
+- **Par-level:** fixed minimum stock. If `on_hand < par_min`, buy up to `par_target`. Otherwise buy nothing.
 
-The Inventory tab is the source of truth — change `Guests/Unit`, `Par Min`, `Par Target` directly there.
+The `Inventory` tab is the source of truth. Staff change `Guests/Unit`, `Par Min`, `Par Target` and `Model` there, and add new items in the same column structure.
 
-## Special-room → auto-add (optional)
+## Special-room auto-add (optional)
 
-The tool can automatically check for check-ins of a specific room type within the shopping window. If any are found, it adds an associated item per check-in to the shopping list under the matching category, with the guest name and check-in date in the notes.
+If `PREMIUM_ROOM_TYPE_ID` is set in `.env`, the tool checks for check-ins of that room type inside the shopping window and adds one associated item per check-in, with the check-in date in the notes. Example: a premium suite arrival adds one bouquet under FLOWERS.
 
-Example: a premium suite check-in adds one bouquet to the FLOWERS category. Driven by `PREMIUM_ROOM_TYPE_ID` in `.env`. No staff action needed — the item appears in the list whenever a matching arrival falls in the window.
-
-## Adjusting items
-
-The Inventory tab is the source of truth. Edit directly:
-- Change `Guests/Unit` to tune consumption rates
-- Add new items (follow the same column structure)
-- Change `Model` between `per-guest` and `par-level`
+If the variable is empty, skip this. Do not add such items by hand from your own reading of the reservations.
 
 ## Guardrails
 
-- Always `--dry-run` first, show the list before writing to the sheet
-- Don't modify the Inventory tab programmatically without asking
-- Excludes specialty/fresh items that are ordered separately (e.g. daily bakery deliveries handled via WhatsApp / a separate workflow)
-- If guest count from the PMS comes back as 0, treat it as an error signal — do not buy a "zero guests" list silently
+- Always dry run first and show the list before any write.
+- Write to the shopping-list sheet only after explicit approval.
+- Do not edit the `Inventory` or `Stock` tabs. Suggest the change and let staff make it.
+- Do not send the list to a supplier or delivery service. The operator places the order.
+- Use only quantities the tool returned. Do not invent items, prices, pack sizes or guest counts, and do not compute the list by hand if the tool fails.
+- Specialty or fresh items ordered through a separate channel (for example a daily bakery order) are not part of this list.
