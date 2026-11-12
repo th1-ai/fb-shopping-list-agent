@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash({{INVENTORY_TOOL}} --dry-run)",
+      "Bash({{INVENTORY_TOOL}} --dry-run --days *)",
+      "Bash({{PMS_LOOKUP_TOOL}} *)",
+      "Bash(date *)",
+      "Edit(runs/**)"
+    ],
+    "deny": [
+      "Bash({{INVENTORY_TOOL}} --log *)",
+      "Bash({{INVENTORY_TOOL}} * --log *)",
+      "Bash(rm *)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(git push *)",
+      "Edit(AUTONOMY.md)",
+      "Edit(.env)",
+      "Edit(.claude/**)",
+      "WebFetch",
+      "WebSearch"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/autonomy-guard.py \"{{INVENTORY_TOOL}}\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

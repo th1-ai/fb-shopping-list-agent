@@ -26,3 +26,8 @@ Thumbs.db
 dist/
 build/
 *.log
+
+# Agent run log and handoff files (see runs/README.md)
+runs/*
+!runs/README.md
+!runs/.gitkeep
